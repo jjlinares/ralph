@@ -1,0 +1,10 @@
+# Environment
+.env
+.env.local
+.env*.local
+
+# Test artifacts
+.test/
+
+# User-specific
+.claude/
