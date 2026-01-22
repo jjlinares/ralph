@@ -5,7 +5,7 @@ set -euo pipefail
 # Ralph Installer
 # ============================================
 
-REPO="jj/ralph"  # UPDATE: Change to your GitHub username/repo
+REPO="jjlinares/ralph"
 BINARY_NAME="ralph"
 SCRIPT_NAME="ralph.sh"
 
@@ -74,9 +74,9 @@ install_ralph() {
   info "Downloading ralph..."
 
   if has_command curl; then
-    curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/${SCRIPT_NAME}" -o "$tmp_file"
+    curl -fsSL "https://raw.githubusercontent.com/${REPO}/master/${SCRIPT_NAME}" -o "$tmp_file"
   elif has_command wget; then
-    wget -qO "$tmp_file" "https://raw.githubusercontent.com/${REPO}/main/${SCRIPT_NAME}"
+    wget -qO "$tmp_file" "https://raw.githubusercontent.com/${REPO}/master/${SCRIPT_NAME}"
   else
     error "Neither curl nor wget found"
     exit 1
