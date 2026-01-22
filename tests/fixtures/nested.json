@@ -1,0 +1,24 @@
+{
+  "prdName": "test-feature",
+  "tasks": [
+    {
+      "id": "ui-1",
+      "category": "ui",
+      "description": "Add button component",
+      "steps": ["Button renders", "Button clicks work"],
+      "passes": false
+    },
+    {
+      "id": "ui-2",
+      "category": "ui",
+      "description": "Add form validation",
+      "steps": ["Form validates on submit"],
+      "passes": true
+    }
+  ],
+  "context": {
+    "patterns": ["components/ui/button.tsx"],
+    "keyFiles": ["src/app.tsx"],
+    "nonGoals": ["Mobile support"]
+  }
+}

@@ -40,40 +40,14 @@ source_ralph_functions() {
   export PRD_FORMAT="$prd_format"
   export PROMPT_TEMPLATE_OVERRIDE=""
 
-  # Source the prompt templates
-  PROMPT_TEMPLATE_JSON='Instructions:
-1. Find the highest-priority incomplete task (done: false)
-2. Implement it fully
-3. Write tests and ensure they pass
-4. Run linting and ensure it passes
-5. Verify all acceptanceCriteria are met
-6. Update the PRD file: set done: true for the completed task
-7. Append any useful knowledge to progress.txt
-8. Commit your changes
-
-ONLY WORK ON A SINGLE TASK.
-
-If ALL tasks have done: true, output <promise>COMPLETE</promise>.'
-
-  PROMPT_TEMPLATE_MD='Instructions:
-1. Find the highest-priority incomplete task (marked - [ ])
-2. Implement it fully
-3. Write tests and ensure they pass
-4. Run linting and ensure it passes
-5. Verify all acceptanceCriteria are met
-6. Update the PRD file: change - [ ] to - [x] for the completed task
-7. Append any useful knowledge to progress.txt
-8. Commit your changes
-
-ONLY WORK ON A SINGLE TASK.
-
-If ALL tasks are marked - [x], output <promise>COMPLETE</promise>.'
-
   # Define count_remaining function
   count_remaining() {
     case "$PRD_FORMAT" in
-      json)
-        jq '[.[] | select(.done == false)] | length' "$PRD_FILE"
+      json-nested)
+        jq '[.tasks[] | select(.passes == false)] | length' "$PRD_FILE"
+        ;;
+      json-flat|json)
+        jq '[.[] | select(.passes == false)] | length' "$PRD_FILE"
         ;;
       markdown)
         grep -c '^\- \[ \]' "$PRD_FILE" 2>/dev/null || true
@@ -81,30 +55,14 @@ If ALL tasks are marked - [x], output <promise>COMPLETE</promise>.'
     esac
   }
 
-  # Define build_prompt function
-  build_prompt() {
-    local template
-    if [[ -n "$PROMPT_TEMPLATE_OVERRIDE" ]]; then
-      template="$PROMPT_TEMPLATE_OVERRIDE"
-    else
-      case "$PRD_FORMAT" in
-        json)     template="$PROMPT_TEMPLATE_JSON" ;;
-        markdown) template="$PROMPT_TEMPLATE_MD" ;;
-      esac
-    fi
-
-    cat <<EOF
-Read the PRD at $PRD_FILE
-
-$template
-EOF
-  }
-
   # Define count_completed function
   count_completed() {
     case "$PRD_FORMAT" in
-      json)
-        jq '[.[] | select(.done == true)] | length' "$PRD_FILE"
+      json-nested)
+        jq '[.tasks[] | select(.passes == true)] | length' "$PRD_FILE"
+        ;;
+      json-flat|json)
+        jq '[.[] | select(.passes == true)] | length' "$PRD_FILE"
         ;;
       markdown)
         grep -c '^\- \[x\]' "$PRD_FILE" 2>/dev/null || echo "0"
@@ -115,8 +73,11 @@ EOF
   # Define get_next_task function
   get_next_task() {
     case "$PRD_FORMAT" in
-      json)
-        jq -r '[.[] | select(.done == false)][0] | .name // .title // "Task"' "$PRD_FILE" 2>/dev/null
+      json-nested)
+        jq -r '[.tasks[] | select(.passes == false)][0] | .description // .id // "Task"' "$PRD_FILE" 2>/dev/null
+        ;;
+      json-flat|json)
+        jq -r '[.[] | select(.passes == false)][0] | .name // .title // "Task"' "$PRD_FILE" 2>/dev/null
         ;;
       markdown)
         grep -m1 '^\- \[ \]' "$PRD_FILE" 2>/dev/null | sed 's/^- \[ \] //' | head -c 60
@@ -126,7 +87,6 @@ EOF
 
   export -f count_remaining
   export -f count_completed
-  export -f build_prompt
   export -f get_next_task
 }
 
@@ -171,12 +131,12 @@ SCRIPT"
 # JSON Validation Tests (3)
 # ============================================
 
-@test "json validation: valid JSON with done field passes" {
+@test "json validation: valid JSON with passes field passes" {
   # The script should get past validation (will fail later at agent check without mock)
   run timeout 1 "$RALPH" --prd "$FIXTURES/valid.json" -n 0 2>&1 || true
   # Should not contain "Invalid JSON" error
   [[ "$output" != *"Invalid JSON"* ]]
-  [[ "$output" != *"missing the 'done' field"* ]]
+  [[ "$output" != *"missing 'passes' field"* ]]
 }
 
 @test "json validation: invalid JSON syntax produces error" {
@@ -185,10 +145,10 @@ SCRIPT"
   [[ "$output" == *"Invalid JSON"* ]]
 }
 
-@test "json validation: missing done field produces error" {
-  run "$RALPH" --prd "$FIXTURES/missing-done.json"
+@test "json validation: missing passes field produces error" {
+  run "$RALPH" --prd "$FIXTURES/missing-passes.json"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"missing the 'done' field"* ]]
+  [[ "$output" == *"missing 'passes' field"* ]]
 }
 
 # ============================================
@@ -210,15 +170,15 @@ SCRIPT"
 # count_remaining() Tests (4)
 # ============================================
 
-@test "count_remaining: JSON with 1 incomplete returns 1" {
-  source_ralph_functions "$FIXTURES/valid.json" "json"
+@test "count_remaining: JSON flat with 1 incomplete returns 1" {
+  source_ralph_functions "$FIXTURES/valid.json" "json-flat"
   run count_remaining
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
 }
 
-@test "count_remaining: JSON all done returns 0" {
-  source_ralph_functions "$FIXTURES/all-done.json" "json"
+@test "count_remaining: JSON flat all complete returns 0" {
+  source_ralph_functions "$FIXTURES/all-complete.json" "json-flat"
   run count_remaining
   [ "$status" -eq 0 ]
   [ "$output" = "0" ]
@@ -231,8 +191,8 @@ SCRIPT"
   [ "$output" = "1" ]
 }
 
-@test "count_remaining: markdown all done returns 0" {
-  source_ralph_functions "$FIXTURES/all-done.md" "markdown"
+@test "count_remaining: markdown all complete returns 0" {
+  source_ralph_functions "$FIXTURES/all-complete.md" "markdown"
   run count_remaining
   [ "$status" -eq 0 ]
   [ "$output" = "0" ]
@@ -242,15 +202,15 @@ SCRIPT"
 # count_completed() Tests (4)
 # ============================================
 
-@test "count_completed: JSON with 1 complete returns 1" {
-  source_ralph_functions "$FIXTURES/valid.json" "json"
+@test "count_completed: JSON flat with 1 complete returns 1" {
+  source_ralph_functions "$FIXTURES/valid.json" "json-flat"
   run count_completed
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
 }
 
-@test "count_completed: JSON all done returns total" {
-  source_ralph_functions "$FIXTURES/all-done.json" "json"
+@test "count_completed: JSON flat all complete returns total" {
+  source_ralph_functions "$FIXTURES/all-complete.json" "json-flat"
   run count_completed
   [ "$status" -eq 0 ]
   [ "$output" -gt 0 ]
@@ -263,39 +223,11 @@ SCRIPT"
   [ "$output" = "1" ]
 }
 
-@test "count_completed: markdown all done returns total" {
-  source_ralph_functions "$FIXTURES/all-done.md" "markdown"
+@test "count_completed: markdown all complete returns total" {
+  source_ralph_functions "$FIXTURES/all-complete.md" "markdown"
   run count_completed
   [ "$status" -eq 0 ]
   [ "$output" -gt 0 ]
-}
-
-# ============================================
-# build_prompt() Tests (3)
-# ============================================
-
-@test "build_prompt: JSON format contains 'done: false'" {
-  source_ralph_functions "$FIXTURES/valid.json" "json"
-  run build_prompt
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"done: false"* ]]
-}
-
-@test "build_prompt: markdown format contains '- [ ]'" {
-  source_ralph_functions "$FIXTURES/valid.md" "markdown"
-  run build_prompt
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"- [ ]"* ]]
-}
-
-@test "build_prompt: override file uses custom content" {
-  source_ralph_functions "$FIXTURES/valid.json" "json"
-  PROMPT_TEMPLATE_OVERRIDE="CUSTOM PROMPT OVERRIDE"
-  export PROMPT_TEMPLATE_OVERRIDE
-  run build_prompt
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"CUSTOM PROMPT OVERRIDE"* ]]
-  [[ "$output" != *"done: false"* ]]
 }
 
 # ============================================
@@ -354,8 +286,8 @@ EOF
 # get_next_task() Tests (4)
 # ============================================
 
-@test "get_next_task: JSON returns first incomplete task name" {
-  source_ralph_functions "$FIXTURES/valid.json" "json"
+@test "get_next_task: JSON flat returns first incomplete task name" {
+  source_ralph_functions "$FIXTURES/valid.json" "json-flat"
   run get_next_task
   [ "$status" -eq 0 ]
   [ -n "$output" ]
@@ -363,8 +295,8 @@ EOF
   [[ "$output" != "null" ]]
 }
 
-@test "get_next_task: JSON all done returns fallback" {
-  source_ralph_functions "$FIXTURES/all-done.json" "json"
+@test "get_next_task: JSON flat all complete returns fallback" {
+  source_ralph_functions "$FIXTURES/all-complete.json" "json-flat"
   run get_next_task
   [ "$status" -eq 0 ]
   # When no incomplete tasks, jq returns "Task" (fallback value)
@@ -378,8 +310,8 @@ EOF
   [ -n "$output" ]
 }
 
-@test "get_next_task: markdown all done returns empty" {
-  source_ralph_functions "$FIXTURES/all-done.md" "markdown"
+@test "get_next_task: markdown all complete returns empty" {
+  source_ralph_functions "$FIXTURES/all-complete.md" "markdown"
   run get_next_task
   [ "$status" -eq 0 ]
   [ -z "$output" ]
@@ -409,4 +341,84 @@ EOF
 @test "output: header shows separator lines" {
   run timeout 1 "$RALPH" --prd "$FIXTURES/valid.json" -n 0 2>&1 || true
   [[ "$output" == *"============"* ]]
+}
+
+# ============================================
+# JSON Nested Format Tests (8)
+# ============================================
+
+@test "json-nested: format detection identifies nested format" {
+  run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" -n 0 2>&1 || true
+  [[ "$output" == *"json-nested"* ]]
+}
+
+@test "json-nested: validation passes with passes field" {
+  run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" -n 0 2>&1 || true
+  [[ "$output" != *"missing 'passes' field"* ]]
+}
+
+@test "json-nested: count_remaining returns incomplete tasks" {
+  source_ralph_functions "$FIXTURES/nested.json" "json-nested"
+  run count_remaining
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+}
+
+@test "json-nested: count_completed returns complete tasks" {
+  source_ralph_functions "$FIXTURES/nested.json" "json-nested"
+  run count_completed
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+}
+
+@test "json-nested: get_next_task returns description" {
+  source_ralph_functions "$FIXTURES/nested.json" "json-nested"
+  run get_next_task
+  [ "$status" -eq 0 ]
+  [[ "$output" == "Add button component" ]]
+}
+
+@test "json-nested: all complete returns 0 remaining" {
+  source_ralph_functions "$FIXTURES/nested-complete.json" "json-nested"
+  run count_remaining
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+}
+
+@test "json-nested: all complete get_next_task returns fallback" {
+  source_ralph_functions "$FIXTURES/nested-complete.json" "json-nested"
+  run get_next_task
+  [ "$status" -eq 0 ]
+  [ "$output" = "Task" ]
+}
+
+@test "json-nested: header shows progress file path" {
+  run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" -n 0 2>&1 || true
+  [[ "$output" == *"Progress:"* ]]
+}
+
+# ============================================
+# Folder Mode Tests (3)
+# ============================================
+
+@test "folder mode: accepts directory with tasks.json" {
+  mkdir -p "$TEST_TEMP/prd-folder"
+  cp "$FIXTURES/nested.json" "$TEST_TEMP/prd-folder/tasks.json"
+  run timeout 1 "$RALPH" --prd "$TEST_TEMP/prd-folder" -n 0 2>&1 || true
+  [[ "$output" == *"tasks.json"* ]]
+  [[ "$output" != *"No tasks.json"* ]]
+}
+
+@test "folder mode: creates progress.txt in prd folder" {
+  mkdir -p "$TEST_TEMP/prd-folder"
+  cp "$FIXTURES/nested.json" "$TEST_TEMP/prd-folder/tasks.json"
+  run timeout 1 "$RALPH" --prd "$TEST_TEMP/prd-folder" -n 0 2>&1 || true
+  [[ "$output" == *"$TEST_TEMP/prd-folder/progress.txt"* ]]
+}
+
+@test "folder mode: error when no tasks file found" {
+  mkdir -p "$TEST_TEMP/empty-folder"
+  run "$RALPH" --prd "$TEST_TEMP/empty-folder"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"No tasks.json"* ]]
 }

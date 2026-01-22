@@ -1,0 +1,17 @@
+{
+  "prdName": "test-feature",
+  "tasks": [
+    {
+      "id": "ui-1",
+      "category": "ui",
+      "description": "Add button component",
+      "steps": ["Button renders"],
+      "passes": true
+    }
+  ],
+  "context": {
+    "patterns": [],
+    "keyFiles": [],
+    "nonGoals": []
+  }
+}
