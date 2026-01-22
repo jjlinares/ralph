@@ -66,7 +66,7 @@ Point `--prd` at a folder containing `tasks.json`:
 └── progress.txt  # Created by ralph
 ```
 
-### JSON Nested (tasks.json)
+### JSON (tasks.json)
 
 ```json
 {
@@ -96,24 +96,6 @@ Point `--prd` at a folder containing `tasks.json`:
 - `steps`: Verification steps (how to TEST, not how to build)
 - `context`: Patterns, key files, and non-goals guide the agent
 
-### JSON Flat
-
-```json
-[
-  {
-    "name": "Create user authentication",
-    "description": "Implement login/logout with JWT tokens",
-    "passes": false
-  },
-  {
-    "name": "Setup project structure",
-    "passes": true
-  }
-]
-```
-
-**Note:** All tasks must have a `passes` field (boolean).
-
 ### Markdown
 
 ```markdown
@@ -135,9 +117,9 @@ Point `--prd` at a folder containing `tasks.json`:
 4. Agent marks the task complete in the PRD
 5. Repeats until all tasks are done or max iterations reached
 
-### Nested Format Workflow
+### JSON Format Workflow
 
-For `json-nested` format, the agent:
+For JSON format, the agent:
 1. Reads `context` for patterns, key files, and non-goals
 2. Finds first task with `passes: false`
 3. Implements until ALL `steps` are verified

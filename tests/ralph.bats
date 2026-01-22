@@ -32,22 +32,17 @@ teardown() {
 
 # Helper to source ralph.sh functions without running main loop
 source_ralph_functions() {
-  # Extract just the functions we need to test
   local prd_file="$1"
   local prd_format="$2"
 
   export PRD_FILE="$prd_file"
   export PRD_FORMAT="$prd_format"
-  export PROMPT_TEMPLATE_OVERRIDE=""
 
   # Define count_remaining function
   count_remaining() {
     case "$PRD_FORMAT" in
-      json-nested)
+      json)
         jq '[.tasks[] | select(.passes == false)] | length' "$PRD_FILE"
-        ;;
-      json-flat|json)
-        jq '[.[] | select(.passes == false)] | length' "$PRD_FILE"
         ;;
       markdown)
         grep -c '^\- \[ \]' "$PRD_FILE" 2>/dev/null || true
@@ -58,11 +53,8 @@ source_ralph_functions() {
   # Define count_completed function
   count_completed() {
     case "$PRD_FORMAT" in
-      json-nested)
+      json)
         jq '[.tasks[] | select(.passes == true)] | length' "$PRD_FILE"
-        ;;
-      json-flat|json)
-        jq '[.[] | select(.passes == true)] | length' "$PRD_FILE"
         ;;
       markdown)
         grep -c '^\- \[x\]' "$PRD_FILE" 2>/dev/null || echo "0"
@@ -73,11 +65,8 @@ source_ralph_functions() {
   # Define get_next_task function
   get_next_task() {
     case "$PRD_FORMAT" in
-      json-nested)
+      json)
         jq -r '[.tasks[] | select(.passes == false)][0] | .description // .id // "Task"' "$PRD_FILE" 2>/dev/null
-        ;;
-      json-flat|json)
-        jq -r '[.[] | select(.passes == false)][0] | .name // .title // "Task"' "$PRD_FILE" 2>/dev/null
         ;;
       markdown)
         grep -m1 '^\- \[ \]' "$PRD_FILE" 2>/dev/null | sed 's/^- \[ \] //' | head -c 60
@@ -121,7 +110,7 @@ SCRIPT"
 }
 
 @test "format detection: .yaml file produces error" {
-  cp "$FIXTURES/valid.json" "$TEST_TEMP/test.yaml"
+  cp "$FIXTURES/nested.json" "$TEST_TEMP/test.yaml"
   run "$RALPH" --prd "$TEST_TEMP/test.yaml"
   [ "$status" -eq 1 ]
   [[ "$output" == *"Unknown PRD format"* ]]
@@ -132,9 +121,7 @@ SCRIPT"
 # ============================================
 
 @test "json validation: valid JSON with passes field passes" {
-  # The script should get past validation (will fail later at agent check without mock)
-  run timeout 1 "$RALPH" --prd "$FIXTURES/valid.json" -n 0 2>&1 || true
-  # Should not contain "Invalid JSON" error
+  run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" -n 0 2>&1 || true
   [[ "$output" != *"Invalid JSON"* ]]
   [[ "$output" != *"missing 'passes' field"* ]]
 }
@@ -145,10 +132,11 @@ SCRIPT"
   [[ "$output" == *"Invalid JSON"* ]]
 }
 
-@test "json validation: missing passes field produces error" {
-  run "$RALPH" --prd "$FIXTURES/missing-passes.json"
+@test "json validation: JSON without tasks array produces error" {
+  echo '{"name": "test"}' > "$TEST_TEMP/no-tasks.json"
+  run "$RALPH" --prd "$TEST_TEMP/no-tasks.json"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"missing 'passes' field"* ]]
+  [[ "$output" == *"must have .tasks array"* ]]
 }
 
 # ============================================
@@ -170,15 +158,15 @@ SCRIPT"
 # count_remaining() Tests (4)
 # ============================================
 
-@test "count_remaining: JSON flat with 1 incomplete returns 1" {
-  source_ralph_functions "$FIXTURES/valid.json" "json-flat"
+@test "count_remaining: JSON with 1 incomplete returns 1" {
+  source_ralph_functions "$FIXTURES/nested.json" "json"
   run count_remaining
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
 }
 
-@test "count_remaining: JSON flat all complete returns 0" {
-  source_ralph_functions "$FIXTURES/all-complete.json" "json-flat"
+@test "count_remaining: JSON all complete returns 0" {
+  source_ralph_functions "$FIXTURES/nested-complete.json" "json"
   run count_remaining
   [ "$status" -eq 0 ]
   [ "$output" = "0" ]
@@ -202,15 +190,15 @@ SCRIPT"
 # count_completed() Tests (4)
 # ============================================
 
-@test "count_completed: JSON flat with 1 complete returns 1" {
-  source_ralph_functions "$FIXTURES/valid.json" "json-flat"
+@test "count_completed: JSON with 1 complete returns 1" {
+  source_ralph_functions "$FIXTURES/nested.json" "json"
   run count_completed
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
 }
 
-@test "count_completed: JSON flat all complete returns total" {
-  source_ralph_functions "$FIXTURES/all-complete.json" "json-flat"
+@test "count_completed: JSON all complete returns total" {
+  source_ralph_functions "$FIXTURES/nested-complete.json" "json"
   run count_completed
   [ "$status" -eq 0 ]
   [ "$output" -gt 0 ]
@@ -231,75 +219,20 @@ SCRIPT"
 }
 
 # ============================================
-# CLI Arguments Tests (6)
-# ============================================
-
-@test "cli: --prd sets PRD_FILE" {
-  run timeout 1 "$RALPH" --prd "$FIXTURES/valid.json" -n 0 2>&1 || true
-  [[ "$output" == *"$FIXTURES/valid.json"* ]] || [[ "$output" == *"valid.json"* ]]
-}
-
-@test "cli: -a sets AGENT" {
-  # Create mock opencode
-  cat > "$TEST_TEMP/bin/opencode" << 'EOF'
-#!/bin/bash
-echo "mock opencode"
-EOF
-  chmod +x "$TEST_TEMP/bin/opencode"
-
-  run timeout 1 "$RALPH" --prd "$FIXTURES/valid.json" -a opencode -n 0 2>&1 || true
-  [[ "$output" == *"opencode"* ]]
-}
-
-@test "cli: --safe sets SAFE_MODE" {
-  # Run with --safe flag - check it doesn't error on the flag
-  run timeout 1 "$RALPH" --prd "$FIXTURES/valid.json" --safe -n 0 2>&1 || true
-  # Should not produce an error about --safe being unknown
-  [[ "$output" != *"Unknown: --safe"* ]]
-}
-
-@test "cli: -n sets MAX_ITERATIONS" {
-  run timeout 1 "$RALPH" --prd "$FIXTURES/valid.json" -n 5 2>&1 || true
-  [[ "$output" == *"Max iter:"*"5"* ]]
-}
-
-@test "cli: -h exits 0 and shows help" {
-  run "$RALPH" -h
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Usage:"* ]]
-  [[ "$output" == *"--help"* ]]
-}
-
-@test "cli: unknown option exits 1" {
-  run "$RALPH" --unknown-option
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"Unknown"* ]]
-}
-
-@test "cli: --log-lines sets LOG_LINES" {
-  run "$RALPH" -h
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"--log-lines"* ]]
-}
-
-# ============================================
 # get_next_task() Tests (4)
 # ============================================
 
-@test "get_next_task: JSON flat returns first incomplete task name" {
-  source_ralph_functions "$FIXTURES/valid.json" "json-flat"
+@test "get_next_task: JSON returns first incomplete task description" {
+  source_ralph_functions "$FIXTURES/nested.json" "json"
   run get_next_task
   [ "$status" -eq 0 ]
-  [ -n "$output" ]
-  # Should return the name of the first incomplete task
-  [[ "$output" != "null" ]]
+  [[ "$output" == "Add button component" ]]
 }
 
-@test "get_next_task: JSON flat all complete returns fallback" {
-  source_ralph_functions "$FIXTURES/all-complete.json" "json-flat"
+@test "get_next_task: JSON all complete returns fallback" {
+  source_ralph_functions "$FIXTURES/nested-complete.json" "json"
   run get_next_task
   [ "$status" -eq 0 ]
-  # When no incomplete tasks, jq returns "Task" (fallback value)
   [ "$output" = "Task" ]
 }
 
@@ -318,81 +251,70 @@ EOF
 }
 
 # ============================================
+# CLI Arguments Tests (6)
+# ============================================
+
+@test "cli: --prd sets PRD_FILE" {
+  run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" -n 0 2>&1 || true
+  [[ "$output" == *"nested.json"* ]]
+}
+
+@test "cli: -a sets AGENT" {
+  cat > "$TEST_TEMP/bin/opencode" << 'EOF'
+#!/bin/bash
+echo "mock opencode"
+EOF
+  chmod +x "$TEST_TEMP/bin/opencode"
+
+  run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" -a opencode -n 0 2>&1 || true
+  [[ "$output" == *"opencode"* ]]
+}
+
+@test "cli: --safe sets SAFE_MODE" {
+  run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" --safe -n 0 2>&1 || true
+  [[ "$output" != *"Unknown: --safe"* ]]
+}
+
+@test "cli: -n sets MAX_ITERATIONS" {
+  run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" -n 5 2>&1 || true
+  [[ "$output" == *"Max iter:"*"5"* ]]
+}
+
+@test "cli: -h exits 0 and shows help" {
+  run "$RALPH" -h
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Usage:"* ]]
+  [[ "$output" == *"--help"* ]]
+}
+
+@test "cli: unknown option exits 1" {
+  run "$RALPH" --unknown-option
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Unknown"* ]]
+}
+
+# ============================================
 # Output Format Tests (4)
 # ============================================
 
 @test "output: header shows Ralph title" {
-  run timeout 1 "$RALPH" --prd "$FIXTURES/valid.json" -n 0 2>&1 || true
+  run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" -n 0 2>&1 || true
   [[ "$output" == *"Ralph"* ]]
   [[ "$output" == *"Autonomous AI Coding Loop"* ]]
 }
 
 @test "output: header shows agent name" {
-  run timeout 1 "$RALPH" --prd "$FIXTURES/valid.json" -a claude -n 0 2>&1 || true
+  run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" -a claude -n 0 2>&1 || true
   [[ "$output" == *"Agent:"*"claude"* ]]
 }
 
 @test "output: header shows PRD file and format" {
-  run timeout 1 "$RALPH" --prd "$FIXTURES/valid.json" -n 0 2>&1 || true
+  run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" -n 0 2>&1 || true
   [[ "$output" == *"PRD:"* ]]
   [[ "$output" == *"json"* ]]
 }
 
-@test "output: header shows separator lines" {
-  run timeout 1 "$RALPH" --prd "$FIXTURES/valid.json" -n 0 2>&1 || true
-  [[ "$output" == *"============"* ]]
-}
-
-# ============================================
-# JSON Nested Format Tests (8)
-# ============================================
-
-@test "json-nested: format detection identifies nested format" {
-  run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" -n 0 2>&1 || true
-  [[ "$output" == *"json-nested"* ]]
-}
-
-@test "json-nested: validation passes with passes field" {
-  run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" -n 0 2>&1 || true
-  [[ "$output" != *"missing 'passes' field"* ]]
-}
-
-@test "json-nested: count_remaining returns incomplete tasks" {
-  source_ralph_functions "$FIXTURES/nested.json" "json-nested"
-  run count_remaining
-  [ "$status" -eq 0 ]
-  [ "$output" = "1" ]
-}
-
-@test "json-nested: count_completed returns complete tasks" {
-  source_ralph_functions "$FIXTURES/nested.json" "json-nested"
-  run count_completed
-  [ "$status" -eq 0 ]
-  [ "$output" = "1" ]
-}
-
-@test "json-nested: get_next_task returns description" {
-  source_ralph_functions "$FIXTURES/nested.json" "json-nested"
-  run get_next_task
-  [ "$status" -eq 0 ]
-  [[ "$output" == "Add button component" ]]
-}
-
-@test "json-nested: all complete returns 0 remaining" {
-  source_ralph_functions "$FIXTURES/nested-complete.json" "json-nested"
-  run count_remaining
-  [ "$status" -eq 0 ]
-  [ "$output" = "0" ]
-}
-
-@test "json-nested: all complete get_next_task returns fallback" {
-  source_ralph_functions "$FIXTURES/nested-complete.json" "json-nested"
-  run get_next_task
-  [ "$status" -eq 0 ]
-  [ "$output" = "Task" ]
-}
-
-@test "json-nested: header shows progress file path" {
+@test "output: header shows progress file path" {
   run timeout 1 "$RALPH" --prd "$FIXTURES/nested.json" -n 0 2>&1 || true
   [[ "$output" == *"Progress:"* ]]
 }

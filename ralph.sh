@@ -9,20 +9,7 @@ set -euo pipefail
 # PROMPT TEMPLATES
 # ============================================
 
-PROMPT_TEMPLATE_JSON_FLAT='Instructions:
-1. Find the highest-priority incomplete task (passes: false)
-2. Implement it fully
-3. Write tests and ensure they pass
-4. Run linting and ensure it passes
-5. Verify all acceptanceCriteria are met
-6. Update the PRD file: set passes: true for the completed task
-7. Append any useful knowledge to PROGRESS_FILE_PLACEHOLDER
-
-ONLY WORK ON A SINGLE TASK.
-
-If ALL TASKS have passes: true, output <promise>COMPLETE</promise>.'
-
-PROMPT_TEMPLATE_JSON_NESTED='Instructions:
+PROMPT_TEMPLATE_JSON='Instructions:
 1. Read the context section for patterns, key files, and non-goals
 2. Find the highest-priority incomplete task (passes: false)
 3. Implement it fully following existing patterns
@@ -58,7 +45,7 @@ SAFE_MODE=false
 PRD_INPUT="PRD.json"
 PRD_FILE=""
 PRD_DIR=""
-PRD_FORMAT=""  # "json-flat", "json-nested", or "markdown"
+PRD_FORMAT=""  # "json" or "markdown"
 PROGRESS_FILE=""
 MAX_ITERATIONS=2
 PROMPT_FILE=""
@@ -147,10 +134,9 @@ Options:
   -h, --help               Show this help
 
 Supported PRD formats:
-  - Folder:      .spec/prds/feature-name/ (with tasks.json inside)
-  - JSON nested: {prdName, tasks: [{id, description, steps, passes}], context}
-  - JSON flat:   [{name, passes}]
-  - Markdown:    - [ ] task / - [x] complete
+  - Folder:   .spec/prds/feature-name/ (with tasks.json inside)
+  - JSON:     {prdName, tasks: [{id, description, steps, passes}], context}
+  - Markdown: - [ ] task / - [x] complete
 EOF
       exit 0
       ;;
@@ -204,12 +190,10 @@ if [[ -d "$PRD_INPUT" ]]; then
   PRD_DIR="$PRD_INPUT"
   if [[ -f "$PRD_DIR/tasks.json" ]]; then
     PRD_FILE="$PRD_DIR/tasks.json"
-  elif [[ -f "$PRD_DIR/prd.json" ]]; then
-    PRD_FILE="$PRD_DIR/prd.json"
   elif [[ -f "$PRD_DIR/prd.md" ]]; then
     PRD_FILE="$PRD_DIR/prd.md"
   else
-    echo -e "${RED}[ERROR]${RESET} No tasks.json, prd.json, or prd.md in $PRD_DIR" >&2
+    echo -e "${RED}[ERROR]${RESET} No tasks.json or prd.md in $PRD_DIR" >&2
     exit 1
   fi
 else
@@ -232,12 +216,7 @@ PROGRESS_FILE="$PRD_DIR/progress.txt"
 
 case "${PRD_FILE##*.}" in
   json)
-    # Check if nested format (has .tasks array) or flat format
-    if jq -e '.tasks' "$PRD_FILE" &>/dev/null; then
-      PRD_FORMAT="json-nested"
-    else
-      PRD_FORMAT="json-flat"
-    fi
+    PRD_FORMAT="json"
     ;;
   md)
     PRD_FORMAT="markdown"
@@ -252,20 +231,13 @@ esac
 # Format-Specific Validation
 # ============================================
 
-if [[ "$PRD_FORMAT" == "json-flat" ]]; then
+if [[ "$PRD_FORMAT" == "json" ]]; then
   if ! jq empty "$PRD_FILE" 2>/dev/null; then
     echo -e "${RED}[ERROR]${RESET} Invalid JSON: $PRD_FILE" >&2
     exit 1
   fi
-  missing_passes=$(jq -r '[.[] | select(.passes == null)] | if length > 0 then .[0].name // .[0].title // "index 0" else empty end' "$PRD_FILE" 2>/dev/null)
-  if [[ -n "$missing_passes" ]]; then
-    echo -e "${RED}[ERROR]${RESET} Task '$missing_passes' is missing 'passes' field" >&2
-    exit 1
-  fi
-
-elif [[ "$PRD_FORMAT" == "json-nested" ]]; then
-  if ! jq empty "$PRD_FILE" 2>/dev/null; then
-    echo -e "${RED}[ERROR]${RESET} Invalid JSON: $PRD_FILE" >&2
+  if ! jq -e '.tasks' "$PRD_FILE" &>/dev/null; then
+    echo -e "${RED}[ERROR]${RESET} Invalid format: $PRD_FILE must have .tasks array" >&2
     exit 1
   fi
   missing_passes=$(jq -r '[.tasks[] | select(.passes == null)] | if length > 0 then .[0].id // .[0].description // "index 0" else empty end' "$PRD_FILE" 2>/dev/null)
@@ -299,11 +271,8 @@ touch "$PROGRESS_FILE"
 
 count_remaining() {
   case "$PRD_FORMAT" in
-    json-nested)
+    json)
       jq '[.tasks[] | select(.passes == false)] | length' "$PRD_FILE"
-      ;;
-    json-flat)
-      jq '[.[] | select(.passes == false)] | length' "$PRD_FILE"
       ;;
     markdown)
       grep -c '^\- \[ \]' "$PRD_FILE" 2>/dev/null || echo "0"
@@ -313,11 +282,8 @@ count_remaining() {
 
 count_completed() {
   case "$PRD_FORMAT" in
-    json-nested)
+    json)
       jq '[.tasks[] | select(.passes == true)] | length' "$PRD_FILE"
-      ;;
-    json-flat)
-      jq '[.[] | select(.passes == true)] | length' "$PRD_FILE"
       ;;
     markdown)
       grep -c '^\- \[x\]' "$PRD_FILE" 2>/dev/null || echo "0"
@@ -327,11 +293,8 @@ count_completed() {
 
 get_next_task() {
   case "$PRD_FORMAT" in
-    json-nested)
+    json)
       jq -r '[.tasks[] | select(.passes == false)][0] | .description // .id // "Task"' "$PRD_FILE" 2>/dev/null
-      ;;
-    json-flat)
-      jq -r '[.[] | select(.passes == false)][0] | .name // .title // "Task"' "$PRD_FILE" 2>/dev/null
       ;;
     markdown)
       grep -m1 '^\- \[ \]' "$PRD_FILE" 2>/dev/null | sed 's/^- \[ \] //' | head -c 60
@@ -471,21 +434,17 @@ build_prompt() {
     template="$PROMPT_TEMPLATE_OVERRIDE"
   else
     case "$PRD_FORMAT" in
-      json-nested) template="$PROMPT_TEMPLATE_JSON_NESTED" ;;
-      json-flat)   template="$PROMPT_TEMPLATE_JSON_FLAT" ;;
-      markdown)    template="$PROMPT_TEMPLATE_MD" ;;
+      json)     template="$PROMPT_TEMPLATE_JSON" ;;
+      markdown) template="$PROMPT_TEMPLATE_MD" ;;
     esac
   fi
 
   # Replace progress file placeholder
   template="${template//PROGRESS_FILE_PLACEHOLDER/$PROGRESS_FILE}"
 
-  # Build context section for nested format
+  # Build context section for JSON format
   local context_section=""
-  if [[ "$PRD_FORMAT" == "json-nested" ]]; then
-    local prd_name
-    prd_name=$(jq -r '.prdName // "unknown"' "$PRD_FILE")
-
+  if [[ "$PRD_FORMAT" == "json" ]]; then
     # Check if prd.md exists in same directory
     local prd_md="$PRD_DIR/prd.md"
     if [[ -f "$prd_md" ]]; then
