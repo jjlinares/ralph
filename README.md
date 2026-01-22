@@ -11,12 +11,12 @@ Autonomous AI coding loop that works through tasks in a PRD file until all are c
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/USER/ralph/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jjlinares/ralph/main/install.sh | bash
 ```
 
 Or manually:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/USER/ralph/main/ralph.sh -o /usr/local/bin/ralph
+curl -fsSL https://raw.githubusercontent.com/jjlinares/ralph/main/ralph.sh -o /usr/local/bin/ralph
 chmod +x /usr/local/bin/ralph
 ```
 
