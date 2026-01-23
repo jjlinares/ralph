@@ -526,7 +526,8 @@ while true; do
   ((++iteration))
 
   if [[ "$MAX_ITERATIONS" -gt 0 ]] && [[ "$iteration" -gt "$MAX_ITERATIONS" ]]; then
-    echo -e "${YELLOW}[WARN]${RESET} Reached max iterations ($MAX_ITERATIONS)"
+    completed=$(count_completed)
+    echo -e "${YELLOW}[WARN]${RESET} Reached max iterations ($MAX_ITERATIONS). Completed $completed/$total_tasks tasks."
     break
   fi
 
@@ -552,4 +553,3 @@ while true; do
 done
 
 echo -e "${BOLD}============================================${RESET}"
-echo -e "${GREEN}Done.${RESET} Completed $((iteration - 1)) iteration(s)."
