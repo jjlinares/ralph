@@ -10,6 +10,7 @@ set -euo pipefail
 # ============================================
 
 PROMPT_TEMPLATE_JSON='Instructions:
+Work through ALL incomplete tasks sequentially in this session. For each task:
 1. Read the context section for patterns, key files, and non-goals
 2. Find the highest-priority incomplete task (passes: false)
 3. Implement it fully following existing patterns
@@ -17,24 +18,31 @@ PROMPT_TEMPLATE_JSON='Instructions:
 5. Write tests and ensure they pass
 6. Run linting and ensure it passes
 7. Update the tasks file: set passes: true for the completed task
-8. Append any useful knowledge to PROGRESS_FILE_PLACEHOLDER
+8. Commit your changes with a descriptive message
+9. Append any useful knowledge to PROGRESS_FILE_PLACEHOLDER
+10. Move to the next incomplete task and repeat
 
-ONLY WORK ON A SINGLE TASK. Complete ALL verification steps before marking passes: true.
+Focus on ONE TASK AT A TIME. Complete all verification steps before marking passes: true.
+Do NOT exit after completing a task - continue to the next one.
 
-If ALL TASKS have passes: true, output <promise>COMPLETE</promise>.'
+When ALL tasks have passes: true, output <promise>COMPLETE</promise>.'
 
 PROMPT_TEMPLATE_MD='Instructions:
+Work through ALL incomplete tasks sequentially in this session. For each task:
 1. Find the highest-priority incomplete task (marked - [ ])
 2. Implement it fully
 3. Write tests and ensure they pass
 4. Run linting and ensure it passes
 5. Verify all acceptanceCriteria are met
 6. Update the PRD file: change - [ ] to - [x] for the completed task
-7. Append any useful knowledge to PROGRESS_FILE_PLACEHOLDER
+7. Commit your changes with a descriptive message
+8. Append any useful knowledge to PROGRESS_FILE_PLACEHOLDER
+9. Move to the next incomplete task and repeat
 
-ONLY WORK ON A SINGLE TASK.
+Focus on ONE TASK AT A TIME. Complete all verification before marking done.
+Do NOT exit after completing a task - continue to the next one.
 
-If ALL TASKS are marked - [x], output <promise>COMPLETE</promise>.'
+When ALL tasks are marked - [x], output <promise>COMPLETE</promise>.'
 
 # ============================================
 # Defaults
