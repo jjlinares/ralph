@@ -35,8 +35,6 @@ source_ralph_functions() {
   local prd_file="$1"
 
   export PRD_FILE="$prd_file"
-  export PRD_FORMAT="json"
-
   count_remaining() {
     jq '[.tasks[] | select(.passes == false)] | length' "$PRD_FILE"
   }
@@ -55,40 +53,19 @@ source_ralph_functions() {
 }
 
 # ============================================
-# Format Detection Tests (3)
+# Format Validation Tests (2)
 # ============================================
 
-@test "format detection: .json file sets json format" {
-  run bash -c "source /dev/stdin << 'SCRIPT'
-PRD_FILE='test.json'
-case \"\${PRD_FILE##*.}\" in
-  json) echo \"json\" ;;
-  md)   echo \"markdown\" ;;
-  *)    echo \"unknown\" ;;
-esac
-SCRIPT"
-  [ "$status" -eq 0 ]
-  [ "$output" = "json" ]
+@test "format validation: .json file is accepted" {
+  run timeout 1 "$RALPH" --prd "$FIXTURES/valid.json" -n 0 2>&1 || true
+  [[ "$output" != *"must be a .json file"* ]]
 }
 
-@test "format detection: .md file sets markdown format" {
-  run bash -c "source /dev/stdin << 'SCRIPT'
-PRD_FILE='test.md'
-case \"\${PRD_FILE##*.}\" in
-  json) echo \"json\" ;;
-  md)   echo \"markdown\" ;;
-  *)    echo \"unknown\" ;;
-esac
-SCRIPT"
-  [ "$status" -eq 0 ]
-  [ "$output" = "markdown" ]
-}
-
-@test "format detection: .yaml file produces error" {
-  cp "$FIXTURES/valid.json" "$TEST_TEMP/test.yaml"
-  run "$RALPH" --prd "$TEST_TEMP/test.yaml"
+@test "format validation: non-json file produces error" {
+  echo "not json" > "$TEST_TEMP/test.md"
+  run "$RALPH" --prd "$TEST_TEMP/test.md"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"Unknown PRD format"* ]]
+  [[ "$output" == *"must be a .json file"* ]]
 }
 
 # ============================================
@@ -226,10 +203,10 @@ EOF
   [[ "$output" == *"Agent:"*"claude"* ]]
 }
 
-@test "output: header shows PRD file and format" {
+@test "output: header shows PRD file" {
   run timeout 1 "$RALPH" --prd "$FIXTURES/valid.json" -n 0 2>&1 || true
   [[ "$output" == *"PRD:"* ]]
-  [[ "$output" == *"json"* ]]
+  [[ "$output" == *"valid.json"* ]]
 }
 
 @test "output: header shows progress file path" {

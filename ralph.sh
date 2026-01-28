@@ -24,20 +24,6 @@ ONLY WORK ON A SINGLE TASK. Complete ALL verification steps before marking passe
 
 If ALL TASKS have passes: true, output <promise>COMPLETE</promise>.'
 
-PROMPT_TEMPLATE_MD='Instructions:
-1. Find the highest-priority incomplete task (marked - [ ])
-2. Implement it fully
-3. Write tests and ensure they pass
-4. Run linting and ensure it passes
-5. Verify all acceptanceCriteria are met
-6. Update the PRD file: change - [ ] to - [x] for the completed task
-7. Commit your changes with a descriptive message
-8. Append any useful knowledge to PROGRESS_FILE_PLACEHOLDER
-
-ONLY WORK ON A SINGLE TASK. Complete all verification before marking done.
-
-If ALL TASKS are marked - [x], output <promise>COMPLETE</promise>.'
-
 # ============================================
 # Defaults
 # ============================================
@@ -47,7 +33,6 @@ SAFE_MODE=false
 PRD_INPUT="PRD.json"
 PRD_FILE=""
 PRD_DIR=""
-PRD_FORMAT=""  # "json" or "markdown"
 PROGRESS_FILE=""
 MAX_ITERATIONS=2
 PROMPT_FILE=""
@@ -135,10 +120,9 @@ Options:
   --prompt <file>          Override prompt template with file contents
   -h, --help               Show this help
 
-Supported PRD formats:
+PRD format:
   - Folder:   .spec/prds/feature-name/ (with tasks.json inside)
   - JSON:     {prdName, tasks: [{id, description, steps, passes}], context}
-  - Markdown: - [ ] task / - [x] complete
 EOF
       exit 0
       ;;
@@ -192,10 +176,8 @@ if [[ -d "$PRD_INPUT" ]]; then
   PRD_DIR="$PRD_INPUT"
   if [[ -f "$PRD_DIR/tasks.json" ]]; then
     PRD_FILE="$PRD_DIR/tasks.json"
-  elif [[ -f "$PRD_DIR/prd.md" ]]; then
-    PRD_FILE="$PRD_DIR/prd.md"
   else
-    echo -e "${RED}[ERROR]${RESET} No tasks.json or prd.md in $PRD_DIR" >&2
+    echo -e "${RED}[ERROR]${RESET} No tasks.json in $PRD_DIR" >&2
     exit 1
   fi
 else
@@ -213,46 +195,26 @@ fi
 PROGRESS_FILE="$PRD_DIR/progress.txt"
 
 # ============================================
-# Format Detection
+# Validation: PRD must be JSON
 # ============================================
 
-case "${PRD_FILE##*.}" in
-  json)
-    PRD_FORMAT="json"
-    ;;
-  md)
-    PRD_FORMAT="markdown"
-    ;;
-  *)
-    echo -e "${RED}[ERROR]${RESET} Unknown PRD format: $PRD_FILE (expected .json or .md)" >&2
-    exit 1
-    ;;
-esac
+if [[ "${PRD_FILE##*.}" != "json" ]]; then
+  echo -e "${RED}[ERROR]${RESET} PRD must be a .json file: $PRD_FILE" >&2
+  exit 1
+fi
 
-# ============================================
-# Format-Specific Validation
-# ============================================
-
-if [[ "$PRD_FORMAT" == "json" ]]; then
-  if ! jq empty "$PRD_FILE" 2>/dev/null; then
-    echo -e "${RED}[ERROR]${RESET} Invalid JSON: $PRD_FILE" >&2
-    exit 1
-  fi
-  if ! jq -e '.tasks' "$PRD_FILE" &>/dev/null; then
-    echo -e "${RED}[ERROR]${RESET} Invalid format: $PRD_FILE must have .tasks array" >&2
-    exit 1
-  fi
-  missing_passes=$(jq -r '[.tasks[] | select(.passes == null)] | if length > 0 then .[0].id // .[0].description // "index 0" else empty end' "$PRD_FILE" 2>/dev/null)
-  if [[ -n "$missing_passes" ]]; then
-    echo -e "${RED}[ERROR]${RESET} Task '$missing_passes' is missing 'passes' field" >&2
-    exit 1
-  fi
-
-elif [[ "$PRD_FORMAT" == "markdown" ]]; then
-  if ! grep -q '^\- \[ \]' "$PRD_FILE"; then
-    echo -e "${RED}[ERROR]${RESET} No tasks found in $PRD_FILE (expected '- [ ]' format)" >&2
-    exit 1
-  fi
+if ! jq empty "$PRD_FILE" 2>/dev/null; then
+  echo -e "${RED}[ERROR]${RESET} Invalid JSON: $PRD_FILE" >&2
+  exit 1
+fi
+if ! jq -e '.tasks' "$PRD_FILE" &>/dev/null; then
+  echo -e "${RED}[ERROR]${RESET} Invalid format: $PRD_FILE must have .tasks array" >&2
+  exit 1
+fi
+missing_passes=$(jq -r '[.tasks[] | select(.passes == null)] | if length > 0 then .[0].id // .[0].description // "index 0" else empty end' "$PRD_FILE" 2>/dev/null)
+if [[ -n "$missing_passes" ]]; then
+  echo -e "${RED}[ERROR]${RESET} Task '$missing_passes' is missing 'passes' field" >&2
+  exit 1
 fi
 
 # Load prompt override if provided
@@ -272,36 +234,15 @@ touch "$PROGRESS_FILE"
 # ============================================
 
 count_remaining() {
-  case "$PRD_FORMAT" in
-    json)
-      jq '[.tasks[] | select(.passes == false)] | length' "$PRD_FILE"
-      ;;
-    markdown)
-      grep -c '^\- \[ \]' "$PRD_FILE" 2>/dev/null || echo "0"
-      ;;
-  esac
+  jq '[.tasks[] | select(.passes == false)] | length' "$PRD_FILE"
 }
 
 count_completed() {
-  case "$PRD_FORMAT" in
-    json)
-      jq '[.tasks[] | select(.passes == true)] | length' "$PRD_FILE"
-      ;;
-    markdown)
-      grep -c '^\- \[x\]' "$PRD_FILE" 2>/dev/null || echo "0"
-      ;;
-  esac
+  jq '[.tasks[] | select(.passes == true)] | length' "$PRD_FILE"
 }
 
 get_next_task() {
-  case "$PRD_FORMAT" in
-    json)
-      jq -r '[.tasks[] | select(.passes == false)][0] | .description // .id // "Task"' "$PRD_FILE" 2>/dev/null
-      ;;
-    markdown)
-      grep -m1 '^\- \[ \]' "$PRD_FILE" 2>/dev/null | sed 's/^- \[ \] //' | head -c 60
-      ;;
-  esac
+  jq -r '[.tasks[] | select(.passes == false)][0] | .description // .id // "Task"' "$PRD_FILE" 2>/dev/null
 }
 
 # ============================================
@@ -435,25 +376,18 @@ build_prompt() {
   if [[ -n "$PROMPT_TEMPLATE_OVERRIDE" ]]; then
     template="$PROMPT_TEMPLATE_OVERRIDE"
   else
-    case "$PRD_FORMAT" in
-      json)     template="$PROMPT_TEMPLATE_JSON" ;;
-      markdown) template="$PROMPT_TEMPLATE_MD" ;;
-    esac
+    template="$PROMPT_TEMPLATE_JSON"
   fi
 
-  # Replace progress file placeholder
   template="${template//PROGRESS_FILE_PLACEHOLDER/$PROGRESS_FILE}"
 
-  # Build context section for JSON format
+  # Check if prd.md exists in same directory for additional context
   local context_section=""
-  if [[ "$PRD_FORMAT" == "json" ]]; then
-    # Check if prd.md exists in same directory
-    local prd_md="$PRD_DIR/prd.md"
-    if [[ -f "$prd_md" ]]; then
-      context_section="
+  local prd_md="$PRD_DIR/prd.md"
+  if [[ -f "$prd_md" ]]; then
+    context_section="
 
 PRD document available at: $prd_md (read for full context)"
-    fi
   fi
 
   cat <<EOF
@@ -496,10 +430,9 @@ echo -e "${BOLD}Ralph${RESET} - Autonomous AI Coding Loop"
 case "$AGENT" in
   claude)   echo -e "  Agent:      ${CLAUDE_COLOR}claude${RESET}" ;;
   opencode) echo -e "  Agent:      ${OPENCODE_COLOR}opencode${RESET}" ;;
-  *)        echo -e "  Agent:      ${BLUE}$AGENT${RESET}" ;;
 esac
 [[ -n "$MODEL" ]] && echo "  Model:      $MODEL"
-echo "  PRD:        $PRD_FILE ($PRD_FORMAT)"
+echo "  PRD:        $PRD_FILE"
 echo "  Progress:   $PROGRESS_FILE"
 [[ -n "$PROMPT_FILE" ]] && echo "  Prompt:     $PROMPT_FILE"
 if [[ "$MAX_ITERATIONS" -eq 0 ]]; then
