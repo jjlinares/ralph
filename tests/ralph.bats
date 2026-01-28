@@ -33,45 +33,20 @@ teardown() {
 # Helper to source ralph.sh functions without running main loop
 source_ralph_functions() {
   local prd_file="$1"
-  local prd_format="$2"
 
   export PRD_FILE="$prd_file"
-  export PRD_FORMAT="$prd_format"
+  export PRD_FORMAT="json"
 
-  # Define count_remaining function
   count_remaining() {
-    case "$PRD_FORMAT" in
-      json)
-        jq '[.tasks[] | select(.passes == false)] | length' "$PRD_FILE"
-        ;;
-      markdown)
-        grep -c '^\- \[ \]' "$PRD_FILE" 2>/dev/null || true
-        ;;
-    esac
+    jq '[.tasks[] | select(.passes == false)] | length' "$PRD_FILE"
   }
 
-  # Define count_completed function
   count_completed() {
-    case "$PRD_FORMAT" in
-      json)
-        jq '[.tasks[] | select(.passes == true)] | length' "$PRD_FILE"
-        ;;
-      markdown)
-        grep -c '^\- \[x\]' "$PRD_FILE" 2>/dev/null || echo "0"
-        ;;
-    esac
+    jq '[.tasks[] | select(.passes == true)] | length' "$PRD_FILE"
   }
 
-  # Define get_next_task function
   get_next_task() {
-    case "$PRD_FORMAT" in
-      json)
-        jq -r '[.tasks[] | select(.passes == false)][0] | .description // .id // "Task"' "$PRD_FILE" 2>/dev/null
-        ;;
-      markdown)
-        grep -m1 '^\- \[ \]' "$PRD_FILE" 2>/dev/null | sed 's/^- \[ \] //' | head -c 60
-        ;;
-    esac
+    jq -r '[.tasks[] | select(.passes == false)][0] | .description // .id // "Task"' "$PRD_FILE" 2>/dev/null
   }
 
   export -f count_remaining
@@ -140,114 +115,57 @@ SCRIPT"
 }
 
 # ============================================
-# Markdown Validation Tests (2)
-# ============================================
-
-@test "markdown validation: file with tasks passes" {
-  run timeout 1 "$RALPH" --prd "$FIXTURES/valid.md" -n 0 2>&1 || true
-  [[ "$output" != *"No tasks found"* ]]
-}
-
-@test "markdown validation: file without tasks produces error" {
-  run "$RALPH" --prd "$FIXTURES/empty.md"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"No tasks found"* ]]
-}
-
-# ============================================
-# count_remaining() Tests (4)
+# count_remaining() Tests (2)
 # ============================================
 
 @test "count_remaining: JSON with 1 incomplete returns 1" {
-  source_ralph_functions "$FIXTURES/valid.json" "json"
+  source_ralph_functions "$FIXTURES/valid.json"
   run count_remaining
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
 }
 
 @test "count_remaining: JSON all complete returns 0" {
-  source_ralph_functions "$FIXTURES/all-complete.json" "json"
-  run count_remaining
-  [ "$status" -eq 0 ]
-  [ "$output" = "0" ]
-}
-
-@test "count_remaining: markdown with 1 incomplete returns 1" {
-  source_ralph_functions "$FIXTURES/valid.md" "markdown"
-  run count_remaining
-  [ "$status" -eq 0 ]
-  [ "$output" = "1" ]
-}
-
-@test "count_remaining: markdown all complete returns 0" {
-  source_ralph_functions "$FIXTURES/all-complete.md" "markdown"
+  source_ralph_functions "$FIXTURES/all-complete.json"
   run count_remaining
   [ "$status" -eq 0 ]
   [ "$output" = "0" ]
 }
 
 # ============================================
-# count_completed() Tests (4)
+# count_completed() Tests (2)
 # ============================================
 
 @test "count_completed: JSON with 1 complete returns 1" {
-  source_ralph_functions "$FIXTURES/valid.json" "json"
+  source_ralph_functions "$FIXTURES/valid.json"
   run count_completed
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
 }
 
 @test "count_completed: JSON all complete returns total" {
-  source_ralph_functions "$FIXTURES/all-complete.json" "json"
-  run count_completed
-  [ "$status" -eq 0 ]
-  [ "$output" -gt 0 ]
-}
-
-@test "count_completed: markdown with 1 complete returns 1" {
-  source_ralph_functions "$FIXTURES/valid.md" "markdown"
-  run count_completed
-  [ "$status" -eq 0 ]
-  [ "$output" = "1" ]
-}
-
-@test "count_completed: markdown all complete returns total" {
-  source_ralph_functions "$FIXTURES/all-complete.md" "markdown"
+  source_ralph_functions "$FIXTURES/all-complete.json"
   run count_completed
   [ "$status" -eq 0 ]
   [ "$output" -gt 0 ]
 }
 
 # ============================================
-# get_next_task() Tests (4)
+# get_next_task() Tests (2)
 # ============================================
 
 @test "get_next_task: JSON returns first incomplete task description" {
-  source_ralph_functions "$FIXTURES/valid.json" "json"
+  source_ralph_functions "$FIXTURES/valid.json"
   run get_next_task
   [ "$status" -eq 0 ]
   [[ "$output" == "Add button component" ]]
 }
 
 @test "get_next_task: JSON all complete returns fallback" {
-  source_ralph_functions "$FIXTURES/all-complete.json" "json"
+  source_ralph_functions "$FIXTURES/all-complete.json"
   run get_next_task
   [ "$status" -eq 0 ]
   [ "$output" = "Task" ]
-}
-
-@test "get_next_task: markdown returns first incomplete task" {
-  source_ralph_functions "$FIXTURES/valid.md" "markdown"
-  run get_next_task
-  [ "$status" -eq 0 ]
-  [ -n "$output" ]
-}
-
-@test "get_next_task: markdown all complete returns empty" {
-  source_ralph_functions "$FIXTURES/all-complete.md" "markdown"
-  run get_next_task
-  [ "$status" -eq 0 ]
-  [ -z "$output" ]
 }
 
 # ============================================
@@ -343,4 +261,28 @@ EOF
   run "$RALPH" --prd "$TEST_TEMP/empty-folder"
   [ "$status" -eq 1 ]
   [[ "$output" == *"No tasks.json"* ]]
+}
+
+# ============================================
+# Prompt Template Tests (2)
+# ============================================
+
+# Helper to extract a prompt template block from ralph.sh
+extract_template() {
+  local varname="$1"
+  sed -n "/^${varname}='/,/^'/p" "$RALPH" | sed '1s/^[^=]*='"'"'//; $s/'"'"'$//'
+}
+
+@test "prompt: JSON template contains ONLY WORK ON A SINGLE TASK" {
+  run extract_template PROMPT_TEMPLATE_JSON
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ONLY WORK ON A SINGLE TASK"* ]]
+}
+
+@test "prompt: JSON template does not instruct to continue to next task" {
+  run extract_template PROMPT_TEMPLATE_JSON
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Move to the next"* ]]
+  [[ "$output" != *"continue to the next"* ]]
+  [[ "$output" != *"Work through ALL"* ]]
 }
